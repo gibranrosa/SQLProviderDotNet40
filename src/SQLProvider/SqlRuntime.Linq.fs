@@ -54,7 +54,8 @@ module internal QueryImplementation =
         if (provider.GetType() <> typeof<Providers.MSAccessProvider>) then con.Close() //else get 'COM object that has been separated from its underlying RCW cannot be used.'
         results
 
-    let executeQueryAsync (dc:ISqlDataContext) (provider:ISqlProvider) sqlExp ti =
+    let executeQueryAsync (dc:ISqlDataContext) (provider:ISqlProvider) sqlExp ti = async {return executeQuery dc provider sqlExp ti}
+    (*
        async {
            use con = provider.CreateConnection(dc.ConnectionString) :?> System.Data.Common.DbConnection
            let (query,parameters,projector,baseTable) = QueryExpressionTransformer.convertExpression sqlExp ti con provider
@@ -72,7 +73,7 @@ module internal QueryImplementation =
            if (provider.GetType() <> typeof<Providers.MSAccessProvider>) then con.Close() //else get 'COM object that has been separated from its underlying RCW cannot be used.'
            return results
        }
-
+       *)
     let executeQueryScalar (dc:ISqlDataContext) (provider:ISqlProvider) sqlExp ti =
        use con = provider.CreateConnection(dc.ConnectionString)
        con.Open()
@@ -98,7 +99,9 @@ module internal QueryImplementation =
        if (provider.GetType() <> typeof<Providers.MSAccessProvider>) then con.Close() //else get 'COM object that has been separated from its underlying RCW cannot be used.'
        result
 
-    let executeQueryScalarAsync (dc:ISqlDataContext) (provider:ISqlProvider) sqlExp ti =
+    let executeQueryScalarAsync (dc:ISqlDataContext) (provider:ISqlProvider) sqlExp ti = 
+        async { return executeQueryScalar dc provider sqlExp ti }
+    (*
        async {
            use con = provider.CreateConnection(dc.ConnectionString) :?> System.Data.Common.DbConnection
            do! con.OpenAsync() |> Async.AwaitIAsyncResult |> Async.Ignore
@@ -121,7 +124,7 @@ module internal QueryImplementation =
            if (provider.GetType() <> typeof<Providers.MSAccessProvider>) then con.Close() //else get 'COM object that has been separated from its underlying RCW cannot be used.'
            return box result
        }
-
+       *)
     type SqlQueryable<'T>(dc:ISqlDataContext,provider,sqlQuery,tupleIndex) =
         static member Create(table,conString,provider) =
             SqlQueryable<'T>(conString,provider,BaseTable("",table),ResizeArray<_>()) :> IQueryable<'T>
@@ -143,7 +146,7 @@ module internal QueryImplementation =
              member __.Provider = provider
         interface IAsyncEnumerable<'T> with
              member __.GetAsyncEnumerator() =
-                async {
+                async { 
                     let! executeSql = executeQueryAsync dc provider sqlQuery tupleIndex
                     return (Seq.cast<'T> (executeSql)).GetEnumerator()
                 }
@@ -170,9 +173,9 @@ module internal QueryImplementation =
              member __.Provider = provider
         interface IAsyncEnumerable<'T> with
              member __.GetAsyncEnumerator() =
-                async {
+                async { 
                     let! executeSql = executeQueryAsync dc provider sqlQuery tupleIndex
-                    return (Seq.cast<'T> (executeSql)).GetEnumerator()
+                    return (Seq.cast<'T> (executeSql)).GetEnumerator()                    
                 }
 
     and SqlQueryProvider() =

@@ -479,7 +479,8 @@ type internal OdbcProvider(quotehcar : OdbcQuoteCharacter) =
             finally
                 con.Close()
 
-        member this.ProcessUpdatesAsync(con, entities) =
+        member this.ProcessUpdatesAsync(con, entities) = async { return () }
+        (*
             let sb = Text.StringBuilder()
 
             CommonTasks.``ensure columns have been loaded`` (this :> ISqlProvider) con entities
@@ -530,3 +531,5 @@ type internal OdbcProvider(quotehcar : OdbcQuoteCharacter) =
                 finally
                     con.Close()
             }
+
+        *)

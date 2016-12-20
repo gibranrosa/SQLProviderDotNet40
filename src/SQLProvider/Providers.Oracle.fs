@@ -806,7 +806,8 @@ type internal OracleProvider(resolutionPath, owner, referencedAssemblies, tableN
             finally
                 con.Close()
 
-        member this.ProcessUpdatesAsync(con, entities) =
+        member this.ProcessUpdatesAsync(con, entities) = async { return () }
+        (*
             let sb = Text.StringBuilder()
             let provider = this :> ISqlProvider
 
@@ -863,3 +864,5 @@ type internal OracleProvider(resolutionPath, owner, referencedAssemblies, tableN
                 finally
                     con.Close()
             }
+
+        *)

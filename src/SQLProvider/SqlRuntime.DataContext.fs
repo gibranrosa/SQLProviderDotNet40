@@ -22,6 +22,7 @@ module internal ProviderBuilder =
         | DatabaseProviderTypes.ORACLE -> OracleProvider(resolutionPath, owner, referencedAssemblies, tableNames) :> ISqlProvider
         | DatabaseProviderTypes.MSACCESS -> MSAccessProvider() :> ISqlProvider
         | DatabaseProviderTypes.ODBC -> OdbcProvider(odbcquote) :> ISqlProvider
+        | DatabaseProviderTypes.FIREBIRD -> FirebirdProvider(resolutionPath, owner, referencedAssemblies) :> ISqlProvider
         | _ -> failwith ("Unsupported database provider: " + vendor.ToString())
 
 type public SqlDataContext (typeName,connectionString:string,providerType,resolutionPath, referencedAssemblies, runtimeAssembly, owner, caseSensitivity, tableNames, odbcquote, sqliteLibrary) =
@@ -163,7 +164,9 @@ type public SqlDataContext (typeName,connectionString:string,providerType,resolu
                  yield e
             |]
 
-        member this.ReadEntitiesAsync(name: string, columns: ColumnLookup, reader: DbDataReader) =
+        member this.ReadEntitiesAsync(name: string, columns: ColumnLookup, reader: DbDataReader) = 
+            async { return (this :> ISqlDataContext).ReadEntities(name, columns, reader) }
+        (*
             let collectItemfunc() : SqlEntity =
                     let e = SqlEntity(this, name, columns)
                     for i = 0 to reader.FieldCount - 1 do
@@ -185,6 +188,7 @@ type public SqlDataContext (typeName,connectionString:string,providerType,resolu
                 let! items = readitems []
                 return items |> List.rev |> List.toArray
             }
+            *)
 
         member this.CreateEntity(tableName) =
             use con = provider.CreateConnection(connectionString)

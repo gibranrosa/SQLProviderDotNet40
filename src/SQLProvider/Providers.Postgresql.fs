@@ -831,7 +831,8 @@ type internal PostgresqlProvider(resolutionPath, owner, referencedAssemblies) =
             finally
                 con.Close()
 
-        member this.ProcessUpdatesAsync(con, entities) =
+        member this.ProcessUpdatesAsync(con, entities) = async { return () }
+        (*
             let sb = Text.StringBuilder()
 
             CommonTasks.``ensure columns have been loaded`` (this :> ISqlProvider) con entities
@@ -883,3 +884,4 @@ type internal PostgresqlProvider(resolutionPath, owner, referencedAssemblies) =
                 finally
                     con.Close()
             }
+        *)

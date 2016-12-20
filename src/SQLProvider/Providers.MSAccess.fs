@@ -489,7 +489,8 @@ type internal MSAccessProvider() =
                 ()
                 //con.Close()
 
-        member this.ProcessUpdatesAsync(con, entities) =
+        member this.ProcessUpdatesAsync(con, entities) = async { return () }
+        (*
             let sb = Text.StringBuilder()
 
             entities.Keys |> Seq.iter (fun e -> printfn "entity - %A" e.ColumnValues)
@@ -549,3 +550,5 @@ type internal MSAccessProvider() =
             finally
                 //con.Close()
                 ()
+
+                *)

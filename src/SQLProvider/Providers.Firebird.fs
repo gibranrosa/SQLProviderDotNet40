@@ -8,13 +8,13 @@ open FSharp.Data.Sql
 open FSharp.Data.Sql.Schema
 open FSharp.Data.Sql.Common
 
-module MySql =
+module Firebird =
     let mutable resolutionPath = String.Empty
     let mutable owner = String.Empty
     let mutable referencedAssemblies = [||]
 
     let assemblyNames = [
-        "MySql.Data.dll"
+        "FirebirdSql.Data.FirebirdClient.dll"
     ]
 
     let assembly =
@@ -28,16 +28,16 @@ module MySql =
                 match errors with 
                 | [] -> "" 
                 | x -> Environment.NewLine + "Details: " + Environment.NewLine + String.Join(Environment.NewLine, x)
-           failwithf "Unable to resolve assemblies. One of %s (e.g. from Nuget package MySql.Data) must exist in the paths: %s %s %s"
+           failwithf "Unable to resolve assemblies. One of %s (e.g. from Nuget package Firebird.Data) must exist in the paths: %s %s %s"
                 (String.Join(", ", assemblyNames |> List.toArray))
                 Environment.NewLine
                 (String.Join(Environment.NewLine, paths |> Seq.filter(fun p -> not(String.IsNullOrEmpty p))))
                 details
 
-    let connectionType =  lazy (findType "MySqlConnection")
-    let commandType =     lazy (findType "MySqlCommand")
-    let parameterType =   lazy (findType "MySqlParameter")
-    let enumType =        lazy (findType "MySqlDbType")
+    let connectionType =  lazy (findType "FbConnection")
+    let commandType =     lazy (findType "FbCommand")
+    let parameterType =   lazy (findType "FbParameter")
+    let enumType =        lazy (findType "FbDbType")
     let getSchemaMethod = lazy (connectionType.Value.GetMethod("GetSchema",[|typeof<string>; typeof<string[]>|]))
     let paramEnumCtor   = lazy parameterType.Value.GetConstructor([|typeof<string>;enumType.Value|])
     let paramObjectCtor = lazy parameterType.Value.GetConstructor([|typeof<string>;typeof<obj>|])
@@ -66,7 +66,7 @@ module MySql =
         let getDbType(providerType:int) =
             let parameterType = parameterType.Value
             let p = Activator.CreateInstance(parameterType,[||]) :?> IDbDataParameter
-            let oracleDbTypeSetter = parameterType.GetProperty("MySqlDbType").GetSetMethod()
+            let oracleDbTypeSetter = parameterType.GetProperty("FbDbType").GetSetMethod()
             let dbTypeGetter = parameterType.GetProperty("DbType").GetGetMethod()
             oracleDbTypeSetter.Invoke(p, [|providerType|]) |> ignore
             dbTypeGetter.Invoke(p, [||]) :?> DbType
@@ -119,7 +119,7 @@ module MySql =
 
         let parameterType = parameterType.Value
         let mySqlDbTypeSetter =
-            parameterType.GetProperty("MySqlDbType").GetSetMethod()
+            parameterType.GetProperty("FbDbType").GetSetMethod()
 
         let p = Activator.CreateInstance(parameterType,[|box param.Name;value|]) :?> IDbDataParameter
 
@@ -142,9 +142,9 @@ module MySql =
     let getSprocName (row:DataRow) =
         let defaultValue =
             if row.Table.Columns.Contains("specific_schema") then row.["specific_schema"]
-            else row.["routine_schema"]
+            else row.["procedure_schema"]
         let owner = Sql.dbUnboxWithDefault<string> owner defaultValue
-        let procName = (Sql.dbUnboxWithDefault<string> (Guid.NewGuid().ToString()) row.["specific_name"])
+        let procName = (Sql.dbUnboxWithDefault<string> (Guid.NewGuid().ToString()) row.["procedure_name"])
         { ProcName = procName; Owner = owner; PackageName = String.Empty; }
 
     let getSprocParameters (con:IDbConnection) (name:SprocName) =
@@ -177,7 +177,7 @@ module MySql =
         let dbName = if String.IsNullOrEmpty owner then con.Database else owner
 
         //This could filter the query using the Sproc name passed in
-        Sql.connect con (Sql.executeSqlAsDataTable createCommand (sprintf "SELECT * FROM information_schema.PARAMETERS where SPECIFIC_SCHEMA = '%s'" dbName))
+        Sql.connect con (Sql.executeSqlAsDataTable createCommand (sprintf "SELECT * FROM RDB$PROCEDURE_PARAMETERS"))
         |> DataTable.groupBy (fun row -> getSprocName row, createSprocParameters row)
         |> Seq.filter (fun (n, _) -> n.ProcName = name.ProcName)
         |> Seq.collect (snd >> Seq.choose id)
@@ -188,10 +188,11 @@ module MySql =
         getSchema "Procedures" [||] con
         |> DataTable.map (fun row ->
                             let name = getSprocName row
-                            match (Sql.dbUnbox<string> row.["routine_type"]).ToUpper() with
-                            | "FUNCTION" -> Root("Functions", Sproc({ Name = name; Params = (fun con -> getSprocParameters con name); ReturnColumns = (fun _ name -> getSprocReturnCols name) }))
-                            | "PROCEDURE" ->  Root("Procedures", Sproc({ Name = name; Params = (fun con -> getSprocParameters con name); ReturnColumns = (fun _ name -> getSprocReturnCols name) }))
-                            | _ -> Empty
+                            //match (Sql.dbUnbox<string> row.["routine_type"]).ToUpper() with
+                            //| "FUNCTION" -> Root("Functions", Sproc({ Name = name; Params = (fun con -> getSprocParameters con name); ReturnColumns = (fun _ name -> getSprocReturnCols name) }))
+                            //| "PROCEDURE" ->  
+                            Root("Procedures", Sproc({ Name = name; Params = (fun con -> getSprocParameters con name); ReturnColumns = (fun _ name -> getSprocReturnCols name) }))
+                            //| _ -> Empty
                           )
         |> Seq.toList
 
@@ -248,7 +249,7 @@ module MySql =
             use reader = com.ExecuteReader()
             Set(cols |> Array.map (processReturnColumn reader))
 
-type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this =
+type internal FirebirdProvider(resolutionPath, owner, referencedAssemblies) as this =
     let pkLookup = ConcurrentDictionary<string,string list>()
     let tableLookup = ConcurrentDictionary<string,Table>()
     let columnLookup = ConcurrentDictionary<string,ColumnLookup>()
@@ -264,7 +265,7 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
             (([],0),entity.ColumnValues)
             ||> Seq.fold(fun (out,i) (k,v) ->
                 let name = sprintf "@param%i" i
-                let p = (this :> ISqlProvider).CreateCommandParameter((MySql.createParam name i v),v)
+                let p = (this :> ISqlProvider).CreateCommandParameter((Firebird.createParam name i v),v)
                 (k,p)::out,i+1)
             |> fun (x,_)-> x
             |> List.rev
@@ -273,7 +274,7 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
 
         sb.Clear() |> ignore
         ~~(sprintf "INSERT INTO %s (%s) VALUES (%s); SELECT LAST_INSERT_ID();"
-            (entity.Table.FullName.Replace("\"","`").Replace("[","`").Replace("]","`").Replace("``","`"))
+            (entity.Table.Name.Replace("\"","`").Replace("[","`").Replace("]","`").Replace("``","`"))
             ("`" + (String.Join("`, `",columnNames)) + "`")
             (String.Join(",",values |> Array.map(fun p -> p.ParameterName))))
 
@@ -305,7 +306,7 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
                 let name = sprintf "@param%i" i
                 let p =
                     match entity.GetColumnOption<obj> col with
-                    | Some v -> (this :> ISqlProvider).CreateCommandParameter((MySql.createParam name i v),v)
+                    | Some v -> (this :> ISqlProvider).CreateCommandParameter((Firebird.createParam name i v),v)
                     | None -> (this :> ISqlProvider).CreateCommandParameter(QueryParameter.Create(name, i), DBNull.Value)
                 (col,p)::out,i+1)
             |> fun (x,_)-> x
@@ -316,14 +317,14 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
         | [] -> ()
         | ks -> 
             ~~(sprintf "UPDATE %s SET %s WHERE "
-                (entity.Table.FullName.Replace("\"","`").Replace("[","`").Replace("]","`").Replace("``","`"))
-                (String.Join(",", data |> Array.map(fun (c,p) -> sprintf "`%s` = %s" c p.ParameterName ))))
-            ~~(String.Join(" AND ", ks |> List.mapi(fun i k -> (sprintf "`%s` = @pk%i" k i))) + ";")
+                (entity.Table.Name.Replace("[","\"").Replace("]","\"").Replace("``","\""))
+                (String.Join(",", data |> Array.map(fun (c,p) -> sprintf "%s = %s" c p.ParameterName ))))
+            ~~(String.Join(" AND ", ks |> List.mapi(fun i k -> (sprintf "%s = @pk%i" k i))) + ";")
 
         data |> Array.map snd |> Array.iter (cmd.Parameters.Add >> ignore)
 
         pkValues |> List.iteri(fun i pkValue ->
-            let p = (this :> ISqlProvider).CreateCommandParameter((MySql.createParam ("@pk"+i.ToString()) i pkValue),pkValue)
+            let p = (this :> ISqlProvider).CreateCommandParameter((Firebird.createParam ("@pk"+i.ToString()) i pkValue),pkValue)
             cmd.Parameters.Add(p) |> ignore)
         cmd.CommandText <- sb.ToString()
         cmd
@@ -342,40 +343,42 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
             | v -> v
 
         pkValues |> List.iteri(fun i pkValue ->
-            let p = (this :> ISqlProvider).CreateCommandParameter((MySql.createParam ("@id"+i.ToString()) i pkValue),pkValue)
+            let p = (this :> ISqlProvider).CreateCommandParameter((Firebird.createParam ("@id"+i.ToString()) i pkValue),pkValue)
             cmd.Parameters.Add(p) |> ignore)
 
         match pk with
         | [] -> ()
         | ks -> 
-            ~~(sprintf "DELETE FROM %s WHERE " (entity.Table.FullName.Replace("\"","`").Replace("[","`").Replace("]","`").Replace("``","`")))
+            ~~(sprintf "DELETE FROM %s WHERE " (entity.Table.Name.Replace("[","\"").Replace("]","\"").Replace("``","\"")))
             ~~(String.Join(" AND ", ks |> List.mapi(fun i k -> (sprintf "%s = @id%i" k i))) + ";")
         cmd.CommandText <- sb.ToString()
         cmd
 
     do
-        MySql.resolutionPath <- resolutionPath
-        MySql.owner <- owner
-        MySql.referencedAssemblies <- referencedAssemblies
+        Firebird.resolutionPath <- resolutionPath
+        Firebird.owner <- owner
+        Firebird.referencedAssemblies <- referencedAssemblies
 
     interface ISqlProvider with
-        member __.CreateConnection(connectionString) = MySql.createConnection connectionString
-        member __.CreateCommand(connection,commandText) = MySql.createCommand commandText connection
-        member __.CreateCommandParameter(param, value) = MySql.createCommandParameter false param value
-        member __.ExecuteSprocCommand(com,definition,retCols,values) = MySql.executeSprocCommand com definition retCols values
-        member __.CreateTypeMappings(con) = Sql.connect con MySql.createTypeMappings
+        member __.CreateConnection(connectionString) = Firebird.createConnection connectionString
+        member __.CreateCommand(connection,commandText) = Firebird.createCommand commandText connection
+        member __.CreateCommandParameter(param, value) = Firebird.createCommandParameter false param value
+        member __.ExecuteSprocCommand(com,definition,retCols,values) = Firebird.executeSprocCommand com definition retCols values
+        member __.CreateTypeMappings(con) = Sql.connect con Firebird.createTypeMappings
 
         member __.GetTables(con,cs) =
             let dbName = if String.IsNullOrEmpty owner then con.Database else owner
-            let caseChane =
+            (*let caseChane = 
                 match cs with
                 | Common.CaseSensitivityChange.TOUPPER -> "UPPER(TABLE_SCHEMA)"
                 | Common.CaseSensitivityChange.TOLOWER -> "LOWER(TABLE_SCHEMA)"
                 | _ -> "TABLE_SCHEMA"
+                *)
+            if con.State = ConnectionState.Closed then con.Open()
             Sql.connect con (fun con ->
-                use reader = Sql.executeSql MySql.createCommand (sprintf "select TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE from INFORMATION_SCHEMA.TABLES where %s = '%s'" caseChane dbName) con
+                use reader = Sql.executeSql Firebird.createCommand (sprintf "select 'Dbo', trim(RDB$RELATION_NAME), 'BASE TABLE' from RDB$RELATIONS") con
                 [ while reader.Read() do
-                    let table ={ Schema = reader.GetString(0); Name = reader.GetString(1); Type=reader.GetString(2) }
+                    let table ={ Schema = reader.GetString(0); Name = reader.GetString(1).Trim(); Type=reader.GetString(2) }
                     yield tableLookup.GetOrAdd(table.FullName,table) ])
 
         member __.GetPrimaryKey(table) =
@@ -389,35 +392,52 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
             | _ ->
                 // note this data can be obtained using con.GetSchema, but with an epic schema we only want to get the data
                 // we are interested in on demand
-                let baseQuery = @"SELECT DISTINCTROW c.COLUMN_NAME,c.DATA_TYPE, c.character_maximum_length, c.numeric_precision, c.is_nullable
-                                               ,CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 'PRIMARY KEY' ELSE '' END AS KeyType
-                                  FROM INFORMATION_SCHEMA.COLUMNS c
-                                  LEFT JOIN (
-                                              SELECT ku.TABLE_CATALOG,ku.TABLE_SCHEMA,ku.TABLE_NAME,ku.COLUMN_NAME
-                                              FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS tc
-                                              INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS ku
-                                                  ON tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
-                                                  AND tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
-                                           )   pk
-                                  ON  c.TABLE_CATALOG = pk.TABLE_CATALOG
-                                              AND c.TABLE_SCHEMA = pk.TABLE_SCHEMA
-                                              AND c.TABLE_NAME = pk.TABLE_NAME
-                                              AND c.COLUMN_NAME = pk.COLUMN_NAME
-                                  WHERE c.TABLE_SCHEMA = @schema AND c.TABLE_NAME = @table"
+                let baseQuery = @"SELECT DISTINCT trim(c.RDB$FIELD_NAME) COLUMN_NAME,
+                                                LOWER(
+                                                case f.RDB$FIELD_TYPE 
+                                                WHEN 7 then 'SMALLINT'
+                                                when 8 then case f.RDB$FIELD_SUB_TYPE
+                                                  when 1 THEN 'NUMERIC'
+                                                  WHEN 2 THEN 'DECIMAL'
+                                                  ELSE 'INTEGER'
+                                                  END
+                                                when 10 then 'FLOAT'
+                                                when 12 then 'DATE'
+                                                when 13 then 'TIME'
+                                                when 14 then 'CHAR'
+                                                when 16 then 'BIGINT'
+                                                when 27 then 'DOUBLE PRECISION'
+                                                when 35 then 'TIMESTAMP'
+                                                when 37 then 'VARCHAR'
+                                                when 261 then 'BLOB'||' SUBTYPE '|| f.RDB$FIELD_SUB_TYPE
+                                                END)
+                                                DATA_TYPE, f.RDB$CHARACTER_LENGTH character_maximum_length, f.RDB$FIELD_PRECISION numeric_precision, c.RDB$NULL_FLAG is_nullable
+                                               ,
+                                               CASE WHEN c.RDB$FIELD_NAME in 
+                                                   (select i.RDB$FIELD_NAME from RDB$INDEX_SEGMENTS i
+                                                    inner join RDB$RELATION_CONSTRAINTS rc on rc.RDB$INDEX_NAME=i.RDB$INDEX_NAME and rc.RDB$RELATION_NAME=c.RDB$RELATION_NAME
+                                                   where rc.RDB$CONSTRAINT_TYPE='PRIMARY KEY')
+                                                 THEN 'PRIMARY KEY'
+                                               ELSE '' END AS KeyType
+                                  FROM rdb$relation_fields c
+                                  inner join RDB$FIELDS f on f.RDB$FIELD_NAME=c.RDB$FIELD_SOURCE
+                                  
+                                  
+                                  WHERE c.RDB$RELATION_NAME = @table"
                 use com = (this:>ISqlProvider).CreateCommand(con,baseQuery)
-                com.Parameters.Add((this:>ISqlProvider).CreateCommandParameter(QueryParameter.Create("@schema", 0), table.Schema)) |> ignore
-                com.Parameters.Add((this:>ISqlProvider).CreateCommandParameter(QueryParameter.Create("@table", 1), (MySql.ripQuotes table.Name))) |> ignore
+                //com.Parameters.Add((this:>ISqlProvider).CreateCommandParameter(QueryParameter.Create("@schema", 0), table.Schema)) |> ignore
+                com.Parameters.Add((this:>ISqlProvider).CreateCommandParameter(QueryParameter.Create("@table", 1), (Firebird.ripQuotes table.Name))) |> ignore
                 if con.State <> ConnectionState.Open then con.Open()
                 use reader = com.ExecuteReader()
                 let columns =
                     [ while reader.Read() do
                         let dt = reader.GetString(1)
-                        match MySql.findDbType dt with
+                        match Firebird.findDbType dt with
                         | Some(m) ->
                             let col =
                                 { Column.Name = reader.GetString(0)
                                   TypeMapping = m
-                                  IsNullable = let b = reader.GetString(4) in if b = "YES" then true else false
+                                  IsNullable = let b = reader.GetString(4) in if b = "1" then false else true
                                   IsPrimaryKey = if reader.GetString(5) = "PRIMARY KEY" then true else false }
                             if col.IsPrimaryKey then 
                                 pkLookup.AddOrUpdate(table.FullName, [col.Name], fun key old -> 
@@ -436,28 +456,28 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
         member __.GetRelationships(con,table) =
           relationshipLookup.GetOrAdd(table.FullName, fun name ->
             let baseQuery = @"SELECT
-                                 KCU1.CONSTRAINT_NAME AS FK_CONSTRAINT_NAME
-                                ,RC.TABLE_NAME AS FK_TABLE_NAME
-                                ,KCU1.TABLE_SCHEMA AS FK_SCHEMA_NAME
-                                ,KCU1.COLUMN_NAME AS FK_COLUMN_NAME
-                                ,RC.REFERENCED_TABLE_NAME AS REFERENCED_TABLE_NAME
-                                ,KCU1.REFERENCED_TABLE_SCHEMA AS REFERENCED_SCHEMA_NAME
-                                ,KCU1.REFERENCED_COLUMN_NAME AS FK_CONSTRAINT_SCHEMA
-                            FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS AS RC
-
-                            INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS KCU1
-                                ON KCU1.CONSTRAINT_CATALOG = RC.CONSTRAINT_CATALOG
-                                AND KCU1.CONSTRAINT_SCHEMA = RC.CONSTRAINT_SCHEMA
-                                AND KCU1.CONSTRAINT_NAME = RC.CONSTRAINT_NAME  "
+                                 trim(rc.RDB$CONSTRAINT_NAME) AS FK_CONSTRAINT_NAME
+                                ,trim(RC.RDB$RELATION_NAME) AS FK_TABLE_NAME
+                                ,'Dbo' AS FK_SCHEMA_NAME
+                                ,trim(i.RDB$FIELD_NAME) AS FK_COLUMN_NAME
+                                ,trim(rcref.RDB$RELATION_NAME) AS REFERENCED_TABLE_NAME
+                                ,iif(rcref.RDB$RELATION_NAME is null, null, 'Dbo') AS REFERENCED_SCHEMA_NAME
+                                ,trim(iref.RDB$FIELD_NAME) AS FK_CONSTRAINT_SCHEMA
+                            FROM RDB$RELATION_CONSTRAINTS AS RC
+                            inner join RDB$INDEX_SEGMENTS i on i.RDB$INDEX_NAME=rc.RDB$INDEX_NAME
+                            left join RDB$REF_CONSTRAINTS ref on ref.RDB$CONSTRAINT_NAME=rc.RDB$CONSTRAINT_NAME
+                            left join RDB$RELATION_CONSTRAINTS AS RCref on rcref.RDB$CONSTRAINT_NAME=ref.RDB$CONST_NAME_UQ
+                            left join RDB$INDEX_SEGMENTS iref on iref.RDB$INDEX_NAME=rcref.RDB$INDEX_NAME
+                              "
 
             let res = Sql.connect con (fun con ->
-                use reader = (Sql.executeSql MySql.createCommand (sprintf "%s WHERE RC.TABLE_NAME = '%s'" baseQuery (MySql.ripQuotes table.Name) ) con)
+                use reader = (Sql.executeSql Firebird.createCommand (sprintf "%s WHERE RC.RDB$RELATION_NAME = '%s'" baseQuery (Firebird.ripQuotes table.Name) ) con)
                 let children =
                     [ while reader.Read() do
                         yield { Name = reader.GetString(0); PrimaryTable=Table.CreateFullName(reader.GetString(2),reader.GetString(1)); PrimaryKey=reader.GetString(3)
                                 ForeignTable=Table.CreateFullName(reader.GetString(5),reader.GetString(4)); ForeignKey=reader.GetString(6) } ]
                 reader.Dispose()
-                use reader = Sql.executeSql MySql.createCommand (sprintf "%s WHERE RC.REFERENCED_TABLE_NAME = '%s'" baseQuery (MySql.ripQuotes table.Name) ) con
+                use reader = Sql.executeSql Firebird.createCommand (sprintf "%s WHERE RCref.RDB$RELATION_NAME = '%s'" baseQuery (Firebird.ripQuotes table.Name) ) con
                 let parents =
                     [ while reader.Read() do
                         yield { Name = reader.GetString(0); PrimaryTable=Table.CreateFullName(reader.GetString(2),reader.GetString(1)); PrimaryKey=reader.GetString(3)
@@ -465,9 +485,9 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
                 (children,parents)) 
             res)
 
-        member __.GetSprocs(con) = Sql.connect con MySql.getSprocs
-        member __.GetIndividualsQueryText(table,amount) = sprintf "SELECT * FROM %s LIMIT %i;" (table.FullName.Replace("\"","`").Replace("[","`").Replace("]","`").Replace("``","`")) amount
-        member __.GetIndividualQueryText(table,column) = sprintf "SELECT * FROM `%s`.`%s` WHERE `%s`.`%s`.`%s` = @id" table.Schema (MySql.ripQuotes table.Name) table.Schema (MySql.ripQuotes table.Name) column
+        member __.GetSprocs(con) = Sql.connect con Firebird.getSprocs
+        member __.GetIndividualsQueryText(table,amount) = sprintf "SELECT first %i * FROM %s;" amount (table.Name.Replace("[","\"").Replace("]","\"").Replace("``","\""))
+        member __.GetIndividualQueryText(table,column) = sprintf "SELECT * FROM %s WHERE %s.%s = @id" (Firebird.ripQuotes table.Name) (Firebird.ripQuotes table.Name) column
 
         member this.GenerateQueryText(sqlQuery,baseAlias,baseTable,projectionColumns) =
             let sb = System.Text.StringBuilder()
@@ -494,24 +514,24 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
                     [|for KeyValue(k,v) in projectionColumns do
                         if v.Count = 0 then   // if no columns exist in the projection then get everything
                             for col in columnLookup.[(getTable k).FullName] |> Seq.map (fun c -> c.Key) do
-                                if singleEntity then yield sprintf "`%s`.`%s` as `%s`" k col col
-                                else yield sprintf "`%s`.`%s` as '`%s`.`%s`'" k col k col
+                                if singleEntity then yield sprintf "%s.%s as %s" k col col
+                                else yield sprintf "%s.%s as '%s.%s'" k col k col
                         else
                             for col in v do
-                                if singleEntity then yield sprintf "`%s`.`%s` as `%s`" k col col
-                                else yield sprintf "`%s`.`%s` as '`%s`.`%s`'" k col k col|]) // F# makes this so easy :)
+                                if singleEntity then yield sprintf "%s.%s as %s" k col col
+                                else yield sprintf "%s.%s as '%s.%s'" k col k col|]) // F# makes this so easy :)
 
             // Create sumBy, minBy, maxBy, ... field columns
             let columns = 
                 let extracolumns =
                     let fieldNotation(al:alias,col:string) = 
                         match String.IsNullOrEmpty(al) with
-                        | true -> sprintf "`%s`" col
-                        | false -> sprintf "`%s`.`%s`" al col
+                        | true -> sprintf "%s" col
+                        | false -> sprintf "%s.%s" al col
                     let fieldNotationAlias(al:alias,col:string) =
                         match String.IsNullOrEmpty(al) with
-                        | true -> sprintf "`%s`" col
-                        | false -> sprintf "'`%s`.`%s`'" al col
+                        | true -> sprintf "%s" col
+                        | false -> sprintf "'%s.%s'" al col
                     FSharp.Data.Sql.Common.Utilities.parseAggregates fieldNotation fieldNotationAlias sqlQuery.AggregateOp
                 // Currently we support only aggregate or select. selectcolumns + String.Join(",", extracolumns) when groupBy is ready
                 match extracolumns with
@@ -528,7 +548,7 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
 
             let createParam (value:obj) =
                 let paramName = nextParam()
-                (this:>ISqlProvider).CreateCommandParameter((MySql.createParam paramName !param value), value)
+                (this:>ISqlProvider).CreateCommandParameter((Firebird.createParam paramName !param value), value)
 
             let rec filterBuilder = function
                 | [] -> ()
@@ -549,15 +569,15 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
                                 let operatorIn operator (array : IDbDataParameter[]) =
                                     if Array.isEmpty array then
                                         match operator with
-                                        | FSharp.Data.Sql.In -> "FALSE" // nothing is in the empty set
-                                        | FSharp.Data.Sql.NotIn -> "TRUE" // anything is not in the empty set
+                                        | FSharp.Data.Sql.In -> "1<>1" // nothing is in the empty set
+                                        | FSharp.Data.Sql.NotIn -> "1=1" // anything is not in the empty set
                                         | _ -> failwith "Should not be called with any other operator"
                                     else
                                         let text = String.Join(",", array |> Array.map (fun p -> p.ParameterName))
                                         Array.iter parameters.Add array
                                         match operator with
-                                        | FSharp.Data.Sql.In -> (sprintf "`%s`.`%s` IN (%s)") alias col text
-                                        | FSharp.Data.Sql.NotIn -> (sprintf "`%s`.`%s` NOT IN (%s)") alias col text
+                                        | FSharp.Data.Sql.In -> (sprintf "%s.%s IN (%s)") alias col text
+                                        | FSharp.Data.Sql.NotIn -> (sprintf "%s.%s NOT IN (%s)") alias col text
                                         | _ -> failwith "Should not be called with any other operator"
 
                                 let prefix = if i>0 then (sprintf " %s " op) else ""
@@ -567,21 +587,21 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
                                     let innersql, innerpars = data.Value |> box :?> string * IDbDataParameter[]
                                     Array.iter parameters.Add innerpars
                                     match operator with
-                                    | FSharp.Data.Sql.NestedIn -> (sprintf "`%s`.`%s` IN (%s)") alias col innersql
-                                    | FSharp.Data.Sql.NestedNotIn -> (sprintf "`%s`.`%s` NOT IN (%s)") alias col innersql
+                                    | FSharp.Data.Sql.NestedIn -> (sprintf "%s.%s IN (%s)") alias col innersql
+                                    | FSharp.Data.Sql.NestedNotIn -> (sprintf "%s.%s NOT IN (%s)") alias col innersql
                                     | _ -> failwith "Should not be called with any other operator"
 
                                 ~~(sprintf "%s%s" prefix <|
                                     match operator with
-                                    | FSharp.Data.Sql.IsNull -> (sprintf "`%s`.`%s` IS NULL") alias col
-                                    | FSharp.Data.Sql.NotNull -> (sprintf "`%s`.`%s` IS NOT NULL") alias col
+                                    | FSharp.Data.Sql.IsNull -> (sprintf "%s.%s IS NULL") alias col
+                                    | FSharp.Data.Sql.NotNull -> (sprintf "%s.%s IS NOT NULL") alias col
                                     | FSharp.Data.Sql.In 
                                     | FSharp.Data.Sql.NotIn -> operatorIn operator paras
                                     | FSharp.Data.Sql.NestedIn 
                                     | FSharp.Data.Sql.NestedNotIn -> operatorInQuery operator paras
                                     | _ ->
                                         parameters.Add paras.[0]
-                                        (sprintf "`%s`.`%s`%s %s") alias col
+                                        (sprintf "%s.%s%s %s") alias col
                                          (operator.ToString()) paras.[0].ParameterName)
                         )
                         // there's probably a nicer way to do this
@@ -618,10 +638,10 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
                 |> List.iter(fun (fromAlias, data, destAlias)  ->
                     let joinType = if data.OuterJoin then "LEFT OUTER JOIN " else "INNER JOIN "
                     let destTable = getTable destAlias
-                    ~~  (sprintf "%s `%s`.`%s` as `%s` on "
-                            joinType destTable.Schema destTable.Name destAlias)
+                    ~~  (sprintf "%s %s as %s on "
+                            joinType destTable.Name destAlias)
                     ~~  (String.Join(" AND ", (List.zip data.ForeignKey data.PrimaryKey) |> List.map(fun (foreignKey,primaryKey) ->
-                        sprintf "`%s`.`%s` = `%s`.`%s`" 
+                        sprintf "%s.%s = %s.%s" 
                             (if data.RelDirection = RelationshipDirection.Parents then fromAlias else destAlias)
                             foreignKey
                             (if data.RelDirection = RelationshipDirection.Parents then destAlias else fromAlias)
@@ -631,14 +651,14 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
                 sqlQuery.Ordering
                 |> List.iteri(fun i (alias,column,desc) ->
                     if i > 0 then ~~ ", "
-                    ~~ (sprintf "`%s`.`%s` %s" alias column (if not desc then "DESC" else "")))
+                    ~~ (sprintf "%s.%s %s" alias column (if not desc then "DESC" else "")))
 
             // SELECT
             if sqlQuery.Distinct then ~~(sprintf "SELECT DISTINCT %s " columns)
             elif sqlQuery.Count then ~~("SELECT COUNT(1) ")
             else  ~~(sprintf "SELECT %s " columns)
             // FROM
-            ~~(sprintf "FROM %s as `%s` " (baseTable.FullName.Replace("\"","`").Replace("[","`").Replace("]","`").Replace("``","`"))  baseAlias)
+            ~~(sprintf "FROM %s as %s " (baseTable.Name.Replace("[","\"").Replace("]","\"").Replace("``","\""))  baseAlias)
             fromBuilder()
             // WHERE
             if sqlQuery.Filters.Length > 0 then
@@ -659,9 +679,9 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
             | None -> ()
 
             match sqlQuery.Take, sqlQuery.Skip with
-            | Some take, Some skip ->  ~~(sprintf " LIMIT %i OFFSET %i;" take skip)
-            | Some take, None ->  ~~(sprintf " LIMIT %i;" take)
-            | None, Some skip -> ~~(sprintf " LIMIT %i OFFSET %i;" System.UInt64.MaxValue skip)
+            | Some take, Some skip ->  ~~(sprintf " ROWS %i TO %i;" (skip+1) (skip+take))
+            | Some take, None ->  ~~(sprintf " ROWS %i;" take)
+            | None, Some skip -> ~~(sprintf " ROWS %i TO %i;" skip System.UInt64.MaxValue)
             | None, None -> ()
 
             let sql = sb.ToString()
@@ -713,9 +733,9 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
             finally
                 con.Close()
 
-        member this.ProcessUpdatesAsync(con, entities) = async { return () }
-        (*
-            let sb = Text.StringBuilder()
+        member this.ProcessUpdatesAsync(con, entities) =
+            async { (this :> ISqlProvider).ProcessUpdates(con, entities) }
+           (* let sb = Text.StringBuilder()
 
             CommonTasks.``ensure columns have been loaded`` (this :> ISqlProvider) con entities
 
@@ -766,6 +786,4 @@ type internal MySqlProvider(resolutionPath, owner, referencedAssemblies) as this
 
                 finally
                     con.Close()
-            }
-
-        *)
+            }*)

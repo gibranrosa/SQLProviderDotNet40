@@ -30,7 +30,7 @@ module AsyncOperations =
             | :? IWithSqlService as svc ->
                 return! executeQueryAsync svc.DataContext svc.Provider (Take(1, svc.SqlExpression)) svc.TupleIndex
             | c ->
-                return c :> Collections.IEnumerable
+                return (c :> Collections.IEnumerable)
         }
 
     let getHeadAsync (s:Linq.IQueryable<'T>) =

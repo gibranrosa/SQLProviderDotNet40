@@ -99,7 +99,7 @@ type SqlTypeProvider(config: TypeProviderConfig) as this =
 
         let createIndividualsType (table:Table) =
             let (et,_,_,_) = baseTypes.Force().[table.FullName]
-            let t = ProvidedTypeDefinition(table.Schema + "." + table.Name + "." + "Individuals", None, HideObjectMethods = true)
+            let t = ProvidedTypeDefinition((if String.IsNullOrWhiteSpace(table.Schema) then "Dbo" else table.Schema) + "." + table.Name + "." + "Individuals", None, HideObjectMethods = true)
             let individualsTypes = ResizeArray<_>()
             individualsTypes.Add t
             
@@ -125,7 +125,7 @@ type SqlTypeProvider(config: TypeProviderConfig) as this =
                       prov.GetColumns(con,table)
                       |> Seq.choose(fun col -> 
                         if col.Key = pk then None else
-                        let name = table.Schema + "." + table.Name + "." + col.Key + "Individuals"
+                        let name = (if String.IsNullOrWhiteSpace(table.Schema) then "Dbo" else table.Schema) + "." + table.Name + "." + col.Key + "Individuals"
                         let ty = ProvidedTypeDefinition(name, None, HideObjectMethods = true )
                         ty.AddMember(ProvidedConstructor([ProvidedParameter("sqlService", typeof<ISqlDataContext>)]))
                         individualsTypes.Add ty

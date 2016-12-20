@@ -150,8 +150,8 @@ module internal QueryExpressionTransformer =
             | ExpressionType.Lambda,             (:? LambdaExpression as e)      -> let exType = e.GetType()
                                                                                     if  exType.IsGenericType
                                                                                         && exType.GetGenericTypeDefinition() = typeof<Expression<obj>>.GetGenericTypeDefinition()
-                                                                                        && exType.GenericTypeArguments.[0].IsSubclassOf typeof<Delegate> then
-                                                                                        upcast Expression.Lambda(e.GetType().GenericTypeArguments.[0],transform en e.Body, e.Parameters)
+                                                                                        && exType.GetGenericArguments().[0].IsSubclassOf typeof<Delegate> then
+                                                                                        upcast Expression.Lambda(e.GetType().GetGenericArguments().[0],transform en e.Body, e.Parameters)
                                                                                     else
                                                                                         upcast Expression.Lambda(transform en e.Body, e.Parameters)
             | ExpressionType.New,                (:? NewExpression as e)         -> if e.Members = null then
